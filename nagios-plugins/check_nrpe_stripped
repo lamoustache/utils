@@ -1,0 +1,16 @@
+#! /bin/bash
+
+# Script to strip back slash from results in NRPE
+
+# Set the temp file and part to check_nrpe
+tempfile=/tmp/nrpe__stripped$RANDOM
+path=/usr/local/nagios/libexec/
+# Shouldn't need to change anything under here
+
+$path/check_nrpe "$@" > $tempfile
+exitcode=$?
+
+sed 's/\\//g' $tempfile | tr '[%(,),#]' '_' |sed 's/_/|/5'
+rm -rf $tempfile
+
+exit $exitcode

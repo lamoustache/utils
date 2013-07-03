@@ -1,0 +1,86 @@
+#!/bin/bash
+# Plugin to check custom XML is up to date
+
+# Help function
+function help {
+echo "This plugin checks the timestamp in XML feed and the timestamp from"
+echo "the webserver serving the file and compares with the system time on Nagios server."
+echo
+echo Usage:
+echo "`basename $0`"
+echo "      -u <URL of the XML feed to check>"
+echo "      -w <Warning level - in seconds>"
+echo "      -c <Critical level - in seconds>"
+echo
+echo "All parameters are mandatory"
+exit 0
+}
+
+# Check the arguments
+if [ $# -ne 6 ]; then
+help
+fi
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -u)
+              URL="$2"
+              ;;
+    -w)
+              Warning="$2"
+              ;;
+    -c)
+              Critical="$2"
+              ;;
+  esac
+  shift
+done
+
+# Create a temp file to dump the output:
+TempFile=/tmp/$RANDOM
+
+# Get the XML file
+wget $URL --save-headers -a $TempFile --server-response -O $TempFile
+
+# Check the server response is good (wget exited with exit code 0):
+if [ $? -ne 0 ]; then
+   echo Error getting file: `grep HTTP/1.1 $TempFile`
+   rm -f $TempFile
+   exit 2
+fi
+
+# For the server timestamp:
+FileModified=`grep Last-Modified $TempFile | awk -F": " '{ print $2 }'`
+FileModInSecs=`date --utc --date "$FileModified" +%s`
+# For the timestamp in the XML file (DB time)
+DBTime=`grep "xml version" $TempFile | awk -F'"' '{ print $6 }' | awk -F'.' '{print $1}' | tr 'T' ' '`
+DBTimeInSecs=`date --date "$DBTime" +%s`
+
+# Time now:
+timenow=`date +%s`
+
+# Calculate the difference:
+FileAge=`echo $(($timenow - $FileModInSecs))`
+DBFileAge=$(($timenow - $DBTimeInSecs)) # -3600 is a hack because timezone on XML is UK time
+
+# Check for warning and critical and exit
+exitcode=0
+status=OK
+
+if [ $FileAge -gt $Warning ] || [ $DBFileAge -gt $Warning ]; then
+   status=Warning
+   exitcode=1
+fi
+
+if [ $FileAge -gt $Critical ] || [ $DBFileAge -gt $Critical ]; then
+   status=Critical
+   exitcode=2
+fi
+
+# Remove the temp file
+rm -f $TempFile
+
+
+echo "$status: File is $FileAge seconds old. DB timestamp is $DBFileAge seconds old | 'FileAge'=$FileAge;;$Warning;$Critical 'DBTimestamp'=$DBFileAge;;;$Warning;$Critical"
+exit $exitcode
+

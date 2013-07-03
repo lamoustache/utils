@@ -1,0 +1,126 @@
+#!/bin/bash
+# Plugin to check the version of a webapp using NTLM authentication
+
+
+usage() {
+cat << EOF
+usage:$0 OPTIONS:
+    [-h     <display this help message>]
+    [-I     <hostname | IP address>]
+    [-S     <SSL>]
+    [-H     <host header>]
+    [-u     <uri>]
+    [-n     <set NTLM authentication ]
+    [-a     <auth (username:password)>]
+    [-d     <debug>]
+EOF
+}
+
+HOST=
+HEADER=
+URI=
+HTTPS=
+AUTH=
+NTLM=0
+TMPFILE=
+DEBUG=0
+
+while getopts "hSnI:H:a:u:d" OPTION
+do
+    case $OPTION in
+        h)
+            usage
+            exit 1
+            ;;
+        S)
+            HTTPS='--ssl'
+            ;;
+        I)
+            HOST=$OPTARG
+            ;;
+
+        H)  HEADER=$OPTARG
+            ;;
+
+        u)
+            URI=$OPTARG
+            ;;
+        a)
+            AUTH=$OPTARG
+            ;;
+        n)
+            NTLM=1
+            ;;
+        d)
+            DEBUG=1
+            ;;
+        ?)
+            usage
+            exit
+            ;;
+    esac
+done
+
+TMPFILE=`mktemp -q /tmp/$HOST.XXXXXXX`
+
+_log() {
+if [ $DEBUG -eq 1 ]; then
+    echo 1>&2 "$@"
+fi
+}
+
+# check the options passed in parametre of the command. If NTLM is set we want at least a host, a url, a host header, and the credentials. Exit with status code 2 (Nagios = CRITICAL)
+if [ $NTLM -eq 1 ]; then
+    if [[ -z $HOST ]] || [[ -z $URI ]] || [[ -z $HEADER ]] || [[ -z $NTLM ]] || [[ -z $AUTH ]]; then
+         usage
+         exit 2
+    fi
+
+    # launch curl using the options passed to the command line and write output in a tmp file. Keep cURL exit code.
+    _log "NTLM: ${NTLM}... Trying to authenticate using username and password"
+    RESULT=`curl -L -b cookie $HTTPS --ntlm -u $AUTH -o $TMPFILE -H "Host: $HEADER" $HOST$URI 2>/dev/null`
+    CURL_STATUS=$?
+    _log "HTTP Query: curl -L -b cookie $HTTPS --ntlm -u $AUTH -o $TMPFILE -H 'Host: $HEADER' $HOST$URI"
+    _log "cURL status: $CURL_STATUS"
+    _log "RESULT: $RESULT"
+
+
+
+# check the options passed in parametre of the command. If NTLM is not set we want at least a host, a url, a host header. Exit with status code 2 (Nagios = CRITICAL)
+elif [ $NTLM -eq 0 ]; then
+    if [[ -z $HOST ]] || [[ -z $URI ]] || [[ -z $HEADER ]]; then
+        usage
+        exit 2
+    fi
+
+    # launch curl using the options passed to the command line and write output in a tmp file
+    _log "NTLM: ${NTLM}... No authentication set"
+    RESULT=`curl -L ${HTTPS} -o ${TMPFILE} -H "Host: ${HEADER}" $HOST$URI 2>/dev/null`
+    CURL_STATUS=$?
+    _log "HTTP Query: curl -L $HTTPS -o $TMPFILE -H 'Host: $HEADER' $HOST$URI"
+    _log "cURL status: $CURL_STATUS"
+    _log "RESULT: $RESULT"
+fi
+
+# if curl failed we exit the prorgam and exit with status code 2 (Nagios = CRITICAL)
+if [ $CURL_STATUS -ne 0 ]; then
+    echo "cURL exit with status $CURL_STATUS"
+    exit 2
+fi
+
+# grep the temporary file and search for the version number
+_log "searching pattern in $TMPFILE"
+VERSION=$(grep -o 'V=[0-9][.][0-9]*[.][0-9]*[.][0-9]*' $TMPFILE)
+
+# display the version number if the pattern is found and exit with status code 0 (Nagios = OK)
+if [ $? -eq 0 ]; then
+    echo "Website version ${VERSION}"
+    rm $TMPFILE
+    exit 0
+
+# display an error message if the pattern is not found an exit with status code 2 (Nagios = CRITICAL)
+elif [ $? -eq 1 ]; then
+    echo "Website version not found"
+    rm $TMPFILE
+    exit 2
+fi
